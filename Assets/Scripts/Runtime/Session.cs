@@ -212,7 +212,7 @@ namespace GoF2Remake.Data
         public static List<ItemStack> Cargo = new List<ItemStack>();
 
         /// <summary>Status+0x1ac.</summary>
-        public static int Credits;
+        public static int Credits = 999999999;
 
         /// <summary>Status+0x19c: the last 3 visited stations with their stock (newest last).</summary>
         public static List<StationStock> RecentStations = new List<StationStock>();
