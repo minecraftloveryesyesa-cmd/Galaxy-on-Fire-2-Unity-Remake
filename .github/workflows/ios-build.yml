@@ -1,0 +1,94 @@
+name: Build GoF2 Remake for iOS (LiveContainer test)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-ios:
+    runs-on: macos-15
+    timeout-minutes: 360
+    steps:
+      - name: Check out source including Git LFS assets
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          lfs: true
+
+      - name: Show Unity version and available disk space
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cat ProjectSettings/ProjectVersion.txt
+          git lfs ls-files | head -n 20 || true
+          df -h
+
+      - name: Cache Unity Library
+        uses: actions/cache@v4
+        with:
+          path: Library
+          key: unity-ios-${{ hashFiles('ProjectSettings/ProjectVersion.txt', 'Packages/manifest.json', 'Packages/packages-lock.json', 'ProjectSettings/**', 'Assets/**') }}
+          restore-keys: |
+            unity-ios-
+
+      - name: Build iOS Xcode project with Unity
+        uses: game-ci/unity-builder@v4
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        with:
+          targetPlatform: iOS
+          buildName: iOS
+          buildsPath: build
+
+      - name: Build unsigned iOS app with Xcode
+        shell: bash
+        run: |
+          set -euo pipefail
+          XCODE_PROJECT="$(find build -type d -name 'Unity-iPhone.xcodeproj' -print -quit)"
+          if [[ -z "$XCODE_PROJECT" ]]; then
+            echo "::error::Unity did not produce Unity-iPhone.xcodeproj. Inspect Unity logs and confirm the iOS module is available."
+            find build -maxdepth 4 -print || true
+            exit 1
+          fi
+          xcodebuild \
+            -project "$XCODE_PROJECT" \
+            -scheme Unity-iPhone \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$GITHUB_WORKSPACE/build/DerivedData" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            build
+
+      - name: Package unsigned IPA for compatibility testing
+        shell: bash
+        run: |
+          set -euo pipefail
+          PRODUCT_DIR="build/DerivedData/Build/Products/Release-iphoneos"
+          APP_PATH="$(find "$PRODUCT_DIR" -maxdepth 1 -type d -name '*.app' -print -quit)"
+          if [[ -z "$APP_PATH" ]]; then
+            echo "::error::Xcode did not produce an .app at $PRODUCT_DIR"
+            find build/DerivedData/Build/Products -maxdepth 3 -print || true
+            exit 1
+          fi
+          mkdir -p build/ipa/Payload
+          cp -R "$APP_PATH" build/ipa/Payload/
+          (cd build/ipa && /usr/bin/zip -qry "$GITHUB_WORKSPACE/build/GoF2Remake-unsigned.ipa" Payload)
+          ls -lh build/GoF2Remake-unsigned.ipa
+          echo "NOTE: This artifact is unsigned; runtime compatibility is not guaranteed."
+
+      - name: Upload build artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: GoF2Remake-iOS-build
+          path: |
+            build/iOS
+            build/GoF2Remake-unsigned.ipa
+          if-no-files-found: warn
+          retention-days: 7
